@@ -1,0 +1,36 @@
+# Settles ended Snagly auctions and keeps the free Render dyno warm.
+#
+# Correctness never depends on this: settlement is lazy and idempotent (see
+# the snagly repo, docs/auction-design.md). This just makes winners hear
+# promptly when nobody is watching. Runs in a public repo because scheduled
+# minutes are free there; the only thing it knows is the public API URL.
+
+name: settle-auctions
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Settle expired auctions
+        run: curl -fsS -m 90 -X POST https://snagly-api-mqkq.onrender.com/api/auctions/sweep || true
+      - name: Health ping (keeps the dyno warm)
+        run: curl -fsS -m 90 https://snagly-api-mqkq.onrender.com/health || true
+
+      # GitHub disables schedules in repos with no activity for 60 days; an
+      # empty commit every ~50 days keeps this alive unattended.
+      - uses: actions/checkout@v4
+      - name: Keepalive commit if the repo has gone quiet
+        run: |
+          if [ -z "$(git log --since='50 days ago' -1 --oneline)" ]; then
+            git config user.name 'snagly-cron'
+            git config user.email 'cron@users.noreply.github.com'
+            git commit --allow-empty -m 'keepalive'
+            git push
+          fi
